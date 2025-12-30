@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>读书笔记排版工具 v4.0 (Kindle 集成版)</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- 图标库 -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Markdown 解析 -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+    <!-- PDF 生成库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Sans+SC:wght@300;400;700&family=Noto+Serif+SC:wght@300;400;700&family=Zhi+Mang+Xing&display=swap" rel="stylesheet">
+
+    <style>
+        /* 字体定义 */
+        .font-sans-sc { font-family: 'Noto Sans SC', system-ui, sans-serif; }
+        .font-serif-sc { font-family: 'Noto Serif SC', 'Songti SC', serif; }
+        .font-kaiti { font-family: 'KaiTi', 'STKaiti', 'Zhi Mang Xing', serif; } 
+        .font-hand { font-family: 'Ma Shan Zheng', cursive; }
+
+        /* 滚动条 */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        
+        /* 基础排版样式 */
+        .paper-content h1 { font-size: 1.8em; font-weight: bold; margin-bottom: 0.8em; line-height: 1.3; border-bottom: 2px solid currentColor; padding-bottom: 0.3em; }
+        .paper-content h2 { font-size: 1.4em; font-weight: bold; margin-top: 1.2em; margin-bottom: 0.6em; }
+        .paper-content h3 { font-size: 1.2em; font-weight: bold; margin-top: 1em; margin-bottom: 0.5em; }
+        
+        .paper-content p { 
+            margin-bottom: 0.8em; 
+            text-align: justify; 
+            position: relative; 
+        }
+
+        .paper-content ul { list-style-type: disc; padding-left: 1.5em; margin-bottom: 1em; }
+        .paper-content ol { list-style-type: decimal; padding-left: 1.5em; margin-bottom: 1em; }
+        
+        /* 引用块样式 - Kindle 笔记将主要使用此样式 */
+        .paper-content blockquote { 
+            border-left: 4px solid currentColor; 
+            padding-left: 1em; 
+            opacity: 0.85; 
+            margin: 1em 0; 
+            background: rgba(0,0,0,0.03);
+            padding-top: 0.5em;
+            padding-bottom: 0.5em;
+            font-style: italic;
+        }
+
+        /* 自动圆点样式 */
+        .enable-auto-bullet p { padding-left: 1.2em; }
+        .enable-auto-bullet p::before {
+            content: var(--bullet-char, "▪");
+            position: absolute;
+            left: 0;
+            top: 0;
+            font-weight: bold;
+            opacity: 0.7;
+        }
+        .enable-auto-bullet li p, .enable-auto-bullet blockquote p { padding-left: 0; }
+        .enable-auto-bullet li p::before, .enable-auto-bullet blockquote p::before { content: none; }
+        
+        /* 双栏布局 */
+        .layout-two-column {
+            column-count: 2;
+            column-gap: 3em;
+            column-rule: 1px solid rgba(0,0,0,0.1);
+            column-fill: balance;
+        }
+        .layout-two-column h1 { column-span: all; text-align: center; border-bottom: none; margin-bottom: 1.5em; }
+
+        /* 纸张阴影效果 */
+        .sheet {
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            flex-shrink: 0; 
+            margin-bottom: 2rem;
+        }
+
+        /* 模态框动画 */
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .modal-backdrop { animation: fadeIn 0.2s ease-out forwards; }
+        .modal-content { animation: slideUp 0.3s ease-out forwards; }
+    </style>
+</head>
+<body class="bg-gray-200 text-slate-800 h-screen overflow-hidden">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useLayoutEffect } = React;
+
+        // --- 配置数据 ---
+        const THEMES = {
+            modern: { name: "现代简约", bg: "#ffffff", text: "#1e293b", accent: "#3b82f6", border: "none" },
+            warm: { name: "温暖书香", bg: "#fdfbf7", text: "#4a4036", accent: "#8c7b75", border: "none" },
+            vintage: { name: "羊皮纸", bg: "#f0e6d2", text: "#2c241b", accent: "#8b4513", border: "1px solid #d4c5a9" },
+            dark: { name: "深色模式", bg: "#1e1e1e", text: "#e0e0e0", accent: "#60a5fa", border: "none" },
+            green: { name: "护眼绿", bg: "#e8f5e9", text: "#1b5e20", accent: "#2e7d32", border: "none" },
+        };
+
+        const FONTS = {
+            sans: { name: "黑体", class: "font-sans-sc" },
+            serif: { name: "宋体", class: "font-serif-sc" },
+            kaiti: { name: "楷体", class: "font-kaiti" },
+            hand: { name: "手写", class: "font-hand" },
+        };
+
+        const PAGE_SIZES = {
+            'A3': { width: 297, height: 420 },
+            'A4': { width: 210, height: 297 },
+            'A5': { width: 148, height: 210 },
+            'B5': { width: 176, height: 250 },
+            'Letter': { width: 216, height: 279 }
+        };
+
+        const BULLET_STYLES = [
+            { label: '方块', value: '▪' },
+            { label: '实心圆', value: '•' },
+            { label: '空心圆', value: '○' },
+            { label: '菱形', value: '◆' },
+            { label: '箭头', value: '▸' },
+        ];
+
+        const defaultText = `# 读书笔记：百年孤独
+
+无论走到哪里，都应该记住，过去都是假的，回忆是一条没有归途的路。
+
+> 这是一个引用块的示例，Kindle 导入的笔记将会自动转换成这种格式，带有左侧边框和灰色背景，非常适合阅读。
+
+以往的一切春天都无法复原，即使最狂热最坚贞的爱情，归根结底也不过是一种瞬息即逝的现实。
+
+(请点击左上角的 "Kindle" 按钮，尝试粘贴您的 My Clippings.txt 内容。)`;
+
+        function App() {
+            // --- 状态管理 ---
+            const [content, setContent] = useState(defaultText);
+            const [currentTheme, setCurrentTheme] = useState('warm');
+            const [currentFont, setCurrentFont] = useState('serif');
+            
+            const [pageSize, setPageSize] = useState('A4');
+            const [margins, setMargins] = useState({ top: 25, bottom: 25, left: 25, right: 25 });
+            
+            const [fontSize, setFontSize] = useState(16);
+            const [lineHeight, setLineHeight] = useState(1.8);
+            const [isTwoColumn, setIsTwoColumn] = useState(false);
+            const [autoBullet, setAutoBullet] = useState(true);
+            const [bulletChar, setBulletChar] = useState('▪');
+            
+            const [isExporting, setIsExporting] = useState(false);
+            const [paginatedContent, setPaginatedContent] = useState([]); 
+
+            // --- Kindle 模态框状态 ---
+            const [showKindleModal, setShowKindleModal] = useState(false);
+            const [kindleRawText, setKindleRawText] = useState('');
+            
+            const fileInputRef = useRef(null);
+            const measureContainerRef = useRef(null); 
+
+            useEffect(() => {
+                lucide.createIcons();
+            }, [content, currentTheme, isTwoColumn, autoBullet, pageSize, paginatedContent, showKindleModal]);
+
+            // --- 核心逻辑：严格分页计算 ---
+            useLayoutEffect(() => {
+                const calculatePages = () => {
+                    const measureDiv = measureContainerRef.current;
+                    if (!measureDiv) return;
+
+                    const size = PAGE_SIZES[pageSize];
+                    const contentWidth = size.width - margins.left - margins.right;
+                    const contentHeight = size.height - margins.top - margins.bottom;
+
+                    measureDiv.style.width = `${contentWidth}mm`;
+                    measureDiv.style.height = `${contentHeight}mm`; 
+                    measureDiv.style.position = 'absolute';
+                    measureDiv.style.visibility = 'hidden';
+                    measureDiv.style.overflow = 'hidden'; 
+                    
+                    measureDiv.style.fontSize = `${fontSize}px`;
+                    measureDiv.style.lineHeight = lineHeight;
+                    measureDiv.className = `paper-content ${FONTS[currentFont].class} ${autoBullet ? 'enable-auto-bullet' : ''} ${isTwoColumn ? 'layout-two-column' : ''}`;
+                    
+                    const tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = marked.parse(content);
+                    const children = Array.from(tempDiv.children);
+
+                    measureDiv.innerHTML = ''; 
+                    const pages = [];
+                    let currentPageNodes = [];
+
+                    const limitHeight = measureDiv.clientHeight;
+                    const nodesToHtml = (nodes) => nodes.map(n => n.outerHTML).join('');
+
+                    for (let i = 0; i < children.length; i++) {
+                        const node = children[i];
+                        const clone = node.cloneNode(true);
+                        measureDiv.appendChild(clone);
+
+                        if (measureDiv.scrollHeight > limitHeight) {
+                            measureDiv.removeChild(clone);
+                            if (currentPageNodes.length > 0) {
+                                pages.push(nodesToHtml(currentPageNodes));
+                            }
+                            measureDiv.innerHTML = ''; 
+                            measureDiv.appendChild(clone); 
+                            currentPageNodes = [clone]; 
+                        } else {
+                            currentPageNodes.push(clone);
+                        }
+                    }
+
+                    if (currentPageNodes.length > 0) {
+                        pages.push(nodesToHtml(currentPageNodes));
+                    }
+
+                    setPaginatedContent(pages);
+                };
+
+                const timer = setTimeout(calculatePages, 100);
+                return () => clearTimeout(timer);
+
+            }, [content, pageSize, margins, fontSize, lineHeight, currentFont, autoBullet, isTwoColumn]);
+
+
+            const handleFileUpload = (event) => {
+                const file = event.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (e) => setContent(e.target.result);
+                reader.readAsText(file, 'UTF-8');
+            };
+
+            // --- Kindle 清洗逻辑 ---
+            const handleKindleProcess = () => {
+                if (!kindleRawText.trim()) {
+                    alert("请先粘贴内容！");
+                    return;
+                }
+
+                const SEPARATOR = "==========";
+                const rawClippings = kindleRawText.split(SEPARATOR);
+                
+                let markdownOutput = "";
+
+                rawClippings.forEach(clipping => {
+                    const trimmed = clipping.trim();
+                    if (!trimmed) return;
+
+                    const lines = trimmed.split('\n').map(line => line.trim());
+                    const nonEmptyLines = lines.filter(line => line.length > 0);
+
+                    // Kindle 格式通常前两行是非内容（标题、位置/时间）
+                    // 我们取第3行及之后的内容
+                    if (nonEmptyLines.length >= 3) {
+                        const noteContent = nonEmptyLines.slice(2).join('\n\n');
+                        // 转换为 Markdown 的引用块格式
+                        markdownOutput += `${noteContent}\n\n`;
+                    }
+                });
+
+                if (markdownOutput) {
+                    // 如果当前内容是默认文本，则覆盖，否则追加
+                    if (content === defaultText) {
+                        setContent("# Kindle 读书笔记\n\n" + markdownOutput);
+                    } else {
+                        setContent(prev => prev + "\n\n---\n\n" + markdownOutput);
+                    }
+                    setShowKindleModal(false);
+                    setKindleRawText('');
+                } else {
+                    alert("未能识别有效的笔记内容，请检查格式。");
+                }
+            };
+
+            const handleExportPDF = async () => {
+                setIsExporting(true);
+                try {
+                    const pageElements = document.querySelectorAll('.sheet-export-target');
+                    if (pageElements.length === 0) return;
+
+                    const size = PAGE_SIZES[pageSize];
+                    const { jsPDF } = window.jspdf;
+                    const pdf = new jsPDF('p', 'mm', [size.width, size.height]);
+
+                    for (let i = 0; i < pageElements.length; i++) {
+                        const element = pageElements[i];
+                        
+                        const originalShadow = element.style.boxShadow;
+                        const originalTransform = element.style.transform;
+                        element.style.boxShadow = 'none';
+                        element.style.transform = 'none'; 
+
+                        const canvas = await html2canvas(element, {
+                            scale: 2, 
+                            useCORS: true,
+                            logging: false,
+                            backgroundColor: THEMES[currentTheme].bg
+                        });
+
+                        element.style.boxShadow = originalShadow;
+                        element.style.transform = originalTransform;
+
+                        const imgData = canvas.toDataURL('image/jpeg', 0.95);
+                        
+                        if (i > 0) pdf.addPage([size.width, size.height]);
+                        pdf.addImage(imgData, 'JPEG', 0, 0, size.width, size.height);
+                    }
+
+                    pdf.save(`笔记_${pageSize}.pdf`);
+                } catch (error) {
+                    console.error(error);
+                    alert('导出失败，请重试');
+                } finally {
+                    setIsExporting(false);
+                }
+            };
+
+            const theme = THEMES[currentTheme];
+            const font = FONTS[currentFont];
+            const sizeConfig = PAGE_SIZES[pageSize];
+
+            return (
+                <div className="flex h-screen overflow-hidden font-sans relative">
+                    {/* 测量容器 */}
+                    <div ref={measureContainerRef} style={{ position: 'fixed', left: '-9999px', top: 0, zIndex: -1 }}></div>
+
+                    {/* Kindle 导入模态框 */}
+                    {showKindleModal && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop bg-black/60 backdrop-blur-sm p-4">
+                            <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh] modal-content overflow-hidden">
+                                <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
+                                    <h3 className="font-bold text-lg text-gray-800 flex items-center gap-2">
+                                        <i data-lucide="book" className="w-5 h-5 text-blue-600"></i>
+                                        导入 Kindle 原始笔记
+                                    </h3>
+                                    <button onClick={() => setShowKindleModal(false)} className="text-gray-400 hover:text-gray-600 transition p-1 hover:bg-gray-200 rounded-full">
+                                        <i data-lucide="x" className="w-5 h-5"></i>
+                                    </button>
+                                </div>
+                                <div className="p-6 flex-1 overflow-y-auto">
+                                    <div className="bg-blue-50 text-blue-800 text-xs p-3 rounded mb-4 border border-blue-100 flex gap-2">
+                                        <i data-lucide="info" className="w-4 h-4 flex-shrink-0 mt-0.5"></i>
+                                        <p>请直接粘贴 `My Clippings.txt` 文件中的内容。工具会自动去除书名、位置代码和时间戳，只保留您的划线内容，并将其格式化为引用块。</p>
+                                    </div>
+                                    <textarea 
+                                        value={kindleRawText}
+                                        onChange={(e) => setKindleRawText(e.target.value)}
+                                        className="w-full h-64 p-4 text-xs font-mono border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none bg-gray-50"
+                                        placeholder={"示例格式：\n\n百年孤独 (加西亚·马尔克斯)\n- 您在位置 #100-100的标注 | 添加于 2023年1月1日\n\n生命中真正重要的不是你遭遇了什么...\n=========="}
+                                    ></textarea>
+                                </div>
+                                <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex justify-end gap-3">
+                                    <button onClick={() => setShowKindleModal(false)} className="px-5 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg transition font-medium">取消</button>
+                                    <button onClick={handleKindleProcess} className="px-5 py-2 text-sm bg-blue-600 text-white hover:bg-blue-700 rounded-lg shadow-md transition font-medium flex items-center gap-2">
+                                        <i data-lucide="sparkles" className="w-4 h-4"></i> 清洗并插入
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 左侧控制栏 */}
+                    <div className="w-80 flex flex-col border-r border-gray-300 bg-white shadow-xl z-20 flex-shrink-0">
+                        <div className="p-4 border-b border-gray-200 flex items-center justify-between bg-gray-50">
+                            <h1 className="font-bold text-gray-800 flex items-center gap-2 text-sm">
+                                <i data-lucide="book-open" className="w-4 h-4 text-blue-600"></i>
+                                排版工具 v4.0
+                            </h1>
+                            <div className="flex gap-1">
+                                <button onClick={() => setShowKindleModal(true)} className="text-xs bg-blue-50 border border-blue-200 text-blue-700 px-2 py-1 rounded hover:bg-blue-100 transition flex items-center gap-1 shadow-sm" title="导入Kindle笔记">
+                                    <i data-lucide="book" className="w-3 h-3"></i> Kindle
+                                </button>
+                                <input type="file" accept=".txt" ref={fileInputRef} className="hidden" onChange={handleFileUpload} />
+                                <button onClick={() => fileInputRef.current.click()} className="text-xs bg-white border border-gray-300 text-gray-700 px-2 py-1 rounded hover:bg-gray-50 transition flex items-center gap-1 shadow-sm" title="导入普通TXT">
+                                    <i data-lucide="upload" className="w-3 h-3"></i> 导入
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="p-4 space-y-6 overflow-y-auto flex-1 custom-scrollbar">
+                            
+                            {/* 1. 页面设置 */}
+                            <section className="space-y-3">
+                                <div className="flex items-center gap-2 text-gray-500 font-bold text-xs uppercase tracking-wider">
+                                    <i data-lucide="layout" className="w-3 h-3"></i> 页面规格
+                                </div>
+                                <div className="bg-gray-50 p-3 rounded-lg border border-gray-200 space-y-3">
+                                    <select value={pageSize} onChange={(e) => setPageSize(e.target.value)} className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded outline-none bg-white focus:border-blue-500">
+                                        {Object.keys(PAGE_SIZES).map(size => (
+                                            <option key={size} value={size}>{size} ({PAGE_SIZES[size].width}x{PAGE_SIZES[size].height}mm)</option>
+                                        ))}
+                                    </select>
+                                    
+                                    <div className="grid grid-cols-2 gap-2">
+                                        {['top', 'bottom', 'left', 'right'].map(m => (
+                                            <div key={m} className="flex items-center border border-gray-300 rounded px-2 bg-white">
+                                                <span className="text-[10px] text-gray-400 mr-1 w-3 uppercase">{m[0]}</span>
+                                                <input type="number" value={margins[m]} onChange={(e) => setMargins({...margins, [m]: Number(e.target.value)})} className="w-full py-1 bg-transparent outline-none text-xs" />
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </section>
+
+                            {/* 2. 外观设置 */}
+                            <section className="space-y-3">
+                                <div className="flex items-center gap-2 text-gray-500 font-bold text-xs uppercase tracking-wider">
+                                    <i data-lucide="palette" className="w-3 h-3"></i> 风格外观
+                                </div>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {Object.entries(THEMES).map(([key, t]) => (
+                                        <button key={key} onClick={() => setCurrentTheme(key)} className={`py-2 px-1 rounded border text-[10px] text-center transition-all truncate shadow-sm ${currentTheme === key ? 'ring-2 ring-blue-500 border-transparent' : 'border-gray-200 hover:border-gray-300'}`} style={{ backgroundColor: t.bg, color: t.text }}>
+                                            {t.name}
+                                        </button>
+                                    ))}
+                                </div>
+                                <div className="grid grid-cols-4 gap-2 mt-2">
+                                    {Object.entries(FONTS).map(([key, f]) => (
+                                        <button key={key} onClick={() => setCurrentFont(key)} className={`py-1.5 px-1 rounded border text-[10px] transition-all shadow-sm ${f.class} ${currentFont === key ? 'bg-blue-50 border-blue-500 text-blue-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                                            {f.name}
+                                        </button>
+                                    ))}
+                                </div>
+                            </section>
+
+                            {/* 3. 排版细节 */}
+                            <section className="space-y-3">
+                                <div className="flex items-center gap-2 text-gray-500 font-bold text-xs uppercase tracking-wider">
+                                    <i data-lucide="type" className="w-3 h-3"></i> 排版细节
+                                </div>
+
+                                <div className="bg-gray-50 rounded-lg border border-gray-200 p-3 space-y-4">
+                                    {/* 滑块 */}
+                                    <div className="space-y-4">
+                                        <div>
+                                            <div className="flex justify-between mb-1">
+                                                <label className="text-[10px] text-gray-500">字号 {fontSize}px</label>
+                                            </div>
+                                            <input type="range" min="12" max="32" step="1" value={fontSize} onChange={(e) => setFontSize(Number(e.target.value))} className="w-full accent-blue-600 h-1 bg-gray-300 rounded-lg appearance-none cursor-pointer" />
+                                        </div>
+                                        <div>
+                                            <div className="flex justify-between mb-1">
+                                                <label className="text-[10px] text-gray-500">行高 {lineHeight}</label>
+                                            </div>
+                                            <input type="range" min="1.2" max="3.0" step="0.1" value={lineHeight} onChange={(e) => setLineHeight(Number(e.target.value))} className="w-full accent-blue-600 h-1 bg-gray-300 rounded-lg appearance-none cursor-pointer" />
+                                        </div>
+                                    </div>
+
+                                    <div className="border-t border-gray-200 pt-3 flex flex-col gap-3">
+                                         {/* 双栏 */}
+                                         <div className="flex items-center justify-between">
+                                            <span className="text-xs font-medium text-gray-600">双栏模式</span>
+                                            <button onClick={() => setIsTwoColumn(!isTwoColumn)} className={`w-8 h-5 rounded-full relative transition-colors ${isTwoColumn ? 'bg-blue-600' : 'bg-gray-300'}`}>
+                                                <div className={`w-3 h-3 bg-white rounded-full absolute top-1 transition-transform ${isTwoColumn ? 'left-4' : 'left-1'}`}></div>
+                                            </button>
+                                        </div>
+
+                                        {/* 自动圆点 */}
+                                        <div className="space-y-2">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-xs font-medium text-gray-600">自动圆点</span>
+                                                <button onClick={() => setAutoBullet(!autoBullet)} className={`w-8 h-5 rounded-full relative transition-colors ${autoBullet ? 'bg-blue-600' : 'bg-gray-300'}`}>
+                                                    <div className={`w-3 h-3 bg-white rounded-full absolute top-1 transition-transform ${autoBullet ? 'left-4' : 'left-1'}`}></div>
+                                                </button>
+                                            </div>
+                                            {autoBullet && (
+                                                <div className="flex gap-1 overflow-x-auto pb-1 no-scrollbar">
+                                                    {BULLET_STYLES.map(style => (
+                                                        <button key={style.value} onClick={() => setBulletChar(style.value)} className={`w-6 h-6 flex-shrink-0 flex items-center justify-center rounded border text-xs ${bulletChar === style.value ? 'bg-white border-blue-500 text-blue-600' : 'border-gray-200 text-gray-400'}`}>
+                                                            {style.value}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            </section>
+
+                            {/* 编辑器 */}
+                            <div>
+                                <label className="text-xs font-bold text-gray-500 uppercase mb-2 block">内容编辑</label>
+                                <textarea value={content} onChange={(e) => setContent(e.target.value)} className="w-full h-40 p-3 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none resize-none shadow-inner" placeholder="输入内容..."></textarea>
+                            </div>
+                        </div>
+
+                        {/* 底部按钮 */}
+                        <div className="p-4 border-t border-gray-200 bg-white space-y-2">
+                            <button onClick={handleExportPDF} disabled={isExporting} className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition flex items-center justify-center gap-2 shadow-md disabled:opacity-70 disabled:cursor-not-allowed">
+                                {isExporting ? <i data-lucide="loader-2" className="animate-spin w-4 h-4"></i> : <i data-lucide="download" className="w-4 h-4"></i>} 导出 PDF
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* 右侧预览区域 */}
+                    <div className="flex-1 bg-slate-200 overflow-y-auto overflow-x-hidden relative">
+                        {/* 居中容器 */}
+                        <div className="min-h-full flex flex-col items-center py-10 px-4">
+                            {paginatedContent.length === 0 ? (
+                                <div className="text-gray-500 mt-20 flex flex-col items-center">
+                                    <i data-lucide="loader-2" className="animate-spin w-8 h-8 mb-2"></i>
+                                    <p>正在计算分页...</p>
+                                </div>
+                            ) : (
+                                paginatedContent.map((pageHtml, index) => (
+                                    <div key={index} className="flex flex-col items-center">
+                                        {/* 纸张实体 */}
+                                        <div 
+                                            className={`sheet sheet-export-target relative bg-white transition-all duration-300 ease-in-out ${font.class}`}
+                                            style={{
+                                                width: `${sizeConfig.width}mm`,
+                                                height: `${sizeConfig.height}mm`, 
+                                                backgroundColor: theme.bg,
+                                                color: theme.text,
+                                                border: theme.border,
+                                                fontSize: `${fontSize}px`,
+                                                lineHeight: lineHeight,
+                                                '--bullet-char': `"${bulletChar}"`,
+                                                overflow: 'hidden' 
+                                            }}
+                                        >
+                                            {/* 内容区域 (绝对定位) */}
+                                            <div 
+                                                className={`absolute paper-content ${isTwoColumn ? 'layout-two-column' : ''} ${autoBullet ? 'enable-auto-bullet' : ''}`}
+                                                style={{
+                                                    top: `${margins.top}mm`,
+                                                    bottom: `${margins.bottom}mm`,
+                                                    left: `${margins.left}mm`,
+                                                    right: `${margins.right}mm`,
+                                                }}
+                                                dangerouslySetInnerHTML={{ __html: pageHtml }}
+                                            />
+                                            
+                                            {/* 页码 */}
+                                            <div className="absolute bottom-2 w-full text-center text-[10px] opacity-40 pointer-events-none">
+                                                - {index + 1} -
+                                            </div>
+                                        </div>
+
+                                        {/* 页间距 */}
+                                        <div className="h-8 w-full"></div>
+                                    </div>
+                                ))
+                            )}
+                            <div className="text-gray-500 text-xs pb-10">
+                                共 {paginatedContent.length} 页
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
