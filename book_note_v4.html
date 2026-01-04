@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>读书笔记排版工具 v4.0 (Kindle 集成版)</title>
+    <title>读书笔记排版工具 v4.2 (下划线终极修复版)</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -38,8 +38,28 @@
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
         
-        /* 基础排版样式 */
-        .paper-content h1 { font-size: 1.8em; font-weight: bold; margin-bottom: 0.8em; line-height: 1.3; border-bottom: 2px solid currentColor; padding-bottom: 0.3em; }
+        /* --- 核心修复：H1 标题样式 --- */
+        .paper-content h1 { 
+            font-size: 1.8em; 
+            font-weight: bold; 
+            margin-bottom: 0.8em; 
+            line-height: 1.4; 
+            display: block;
+            
+            /* 
+               修复方案：背景绘图法 
+               利用线性渐变模拟下划线，html2canvas 对背景定位的渲染比 border 和 pseudo-element 更精准
+            */
+            padding-bottom: 0.4em; /* 控制文字和线的距离 */
+            background-image: linear-gradient(currentColor, currentColor); /* 画一条纯色的线 */
+            background-position: 0% 100%; /* 位置：左下角 */
+            background-repeat: no-repeat; /* 不重复 */
+            background-size: 100% 2px; /* 宽度100%，高度2px（线条粗细） */
+        }
+
+        /* 移除之前的伪元素方案，防止冲突 */
+        .paper-content h1::after { content: none; }
+
         .paper-content h2 { font-size: 1.4em; font-weight: bold; margin-top: 1.2em; margin-bottom: 0.6em; }
         .paper-content h3 { font-size: 1.2em; font-weight: bold; margin-top: 1em; margin-bottom: 0.5em; }
         
@@ -52,7 +72,7 @@
         .paper-content ul { list-style-type: disc; padding-left: 1.5em; margin-bottom: 1em; }
         .paper-content ol { list-style-type: decimal; padding-left: 1.5em; margin-bottom: 1em; }
         
-        /* 引用块样式 - Kindle 笔记将主要使用此样式 */
+        /* 引用块样式 */
         .paper-content blockquote { 
             border-left: 4px solid currentColor; 
             padding-left: 1em; 
@@ -84,7 +104,9 @@
             column-rule: 1px solid rgba(0,0,0,0.1);
             column-fill: balance;
         }
-        .layout-two-column h1 { column-span: all; text-align: center; border-bottom: none; margin-bottom: 1.5em; }
+        .layout-two-column h1 { column-span: all; text-align: center; margin-bottom: 1.5em; }
+        /* 双栏模式下移除下划线（可选，这里设为透明或0尺寸） */
+        .layout-two-column h1 { background-size: 0 0; } 
 
         /* 纸张阴影效果 */
         .sheet {
@@ -140,9 +162,9 @@
 
         const defaultText = `# 读书笔记：百年孤独
 
-无论走到哪里，都应该记住，过去都是假的，回忆是一条没有归途的路。
+这是一个引用块的示例，Kindle 导入的笔记将会自动转换成这种格式。
 
-> 这是一个引用块的示例，Kindle 导入的笔记将会自动转换成这种格式，带有左侧边框和灰色背景，非常适合阅读。
+无论走到哪里，都应该记住，过去都是假的，回忆是一条没有归途的路。
 
 以往的一切春天都无法复原，即使最狂热最坚贞的爱情，归根结底也不过是一种瞬息即逝的现实。
 
@@ -179,10 +201,10 @@
 
             // --- 核心逻辑：严格分页计算 ---
             useLayoutEffect(() => {
-                const calculatePages = () => {
-                    const measureDiv = measureContainerRef.current;
-                    if (!measureDiv) return;
+                const measureDiv = measureContainerRef.current;
+                if (!measureDiv) return;
 
+                const calculatePages = () => {
                     const size = PAGE_SIZES[pageSize];
                     const contentWidth = size.width - margins.left - margins.right;
                     const contentHeight = size.height - margins.top - margins.bottom;
@@ -233,6 +255,7 @@
                     setPaginatedContent(pages);
                 };
 
+                // 防抖处理，避免输入时频繁计算
                 const timer = setTimeout(calculatePages, 100);
                 return () => clearTimeout(timer);
 
@@ -266,17 +289,13 @@
                     const lines = trimmed.split('\n').map(line => line.trim());
                     const nonEmptyLines = lines.filter(line => line.length > 0);
 
-                    // Kindle 格式通常前两行是非内容（标题、位置/时间）
-                    // 我们取第3行及之后的内容
                     if (nonEmptyLines.length >= 3) {
                         const noteContent = nonEmptyLines.slice(2).join('\n\n');
-                        // 转换为 Markdown 的引用块格式
-                        markdownOutput += `${noteContent}\n\n`;
+                        markdownOutput += ` ${noteContent}\n\n`;
                     }
                 });
 
                 if (markdownOutput) {
-                    // 如果当前内容是默认文本，则覆盖，否则追加
                     if (content === defaultText) {
                         setContent("# Kindle 读书笔记\n\n" + markdownOutput);
                     } else {
@@ -289,8 +308,19 @@
                 }
             };
 
+            // --- 升级版导出逻辑：摄影棚模式 ---
             const handleExportPDF = async () => {
                 setIsExporting(true);
+                
+                // 1. 创建“摄影棚”：固定定位，避免 Flex 布局干扰
+                const studio = document.createElement('div');
+                studio.style.position = 'fixed';
+                studio.style.top = '0';
+                studio.style.left = '0';
+                studio.style.zIndex = '-9999';
+                studio.style.visibility = 'visible'; 
+                document.body.appendChild(studio);
+
                 try {
                     const pageElements = document.querySelectorAll('.sheet-export-target');
                     if (pageElements.length === 0) return;
@@ -300,22 +330,33 @@
                     const pdf = new jsPDF('p', 'mm', [size.width, size.height]);
 
                     for (let i = 0; i < pageElements.length; i++) {
-                        const element = pageElements[i];
+                        const originalElement = pageElements[i];
                         
-                        const originalShadow = element.style.boxShadow;
-                        const originalTransform = element.style.transform;
-                        element.style.boxShadow = 'none';
-                        element.style.transform = 'none'; 
+                        // 2. 克隆并净化：移除所有可能导致位移的外部样式
+                        const clone = originalElement.cloneNode(true);
+                        clone.style.transform = 'none';
+                        clone.style.boxShadow = 'none';
+                        clone.style.margin = '0';
+                        clone.style.display = 'block';
+                        
+                        // 强制重置某些可能影响渲染的属性
+                        clone.style.letterSpacing = 'normal'; 
+                        
+                        studio.innerHTML = ''; 
+                        studio.appendChild(clone);
 
-                        const canvas = await html2canvas(element, {
-                            scale: 2, 
+                        // 3. 高清截图
+                        const canvas = await html2canvas(clone, {
+                            scale: 4, // 保持 4 倍高清
                             useCORS: true,
                             logging: false,
-                            backgroundColor: THEMES[currentTheme].bg
+                            backgroundColor: THEMES[currentTheme].bg,
+                            windowWidth: clone.scrollWidth,
+                            windowHeight: clone.scrollHeight,
+                            onclone: (clonedDoc) => {
+                                // 可以在这里对克隆后的 DOM 做最后的微调，如果需要的话
+                            }
                         });
-
-                        element.style.boxShadow = originalShadow;
-                        element.style.transform = originalTransform;
 
                         const imgData = canvas.toDataURL('image/jpeg', 0.95);
                         
@@ -328,6 +369,7 @@
                     console.error(error);
                     alert('导出失败，请重试');
                 } finally {
+                    document.body.removeChild(studio);
                     setIsExporting(false);
                 }
             };
@@ -381,7 +423,7 @@
                         <div className="p-4 border-b border-gray-200 flex items-center justify-between bg-gray-50">
                             <h1 className="font-bold text-gray-800 flex items-center gap-2 text-sm">
                                 <i data-lucide="book-open" className="w-4 h-4 text-blue-600"></i>
-                                排版工具 v4.0
+                                排版工具 v4.2
                             </h1>
                             <div className="flex gap-1">
                                 <button onClick={() => setShowKindleModal(true)} className="text-xs bg-blue-50 border border-blue-200 text-blue-700 px-2 py-1 rounded hover:bg-blue-100 transition flex items-center gap-1 shadow-sm" title="导入Kindle笔记">
@@ -504,7 +546,7 @@
                         {/* 底部按钮 */}
                         <div className="p-4 border-t border-gray-200 bg-white space-y-2">
                             <button onClick={handleExportPDF} disabled={isExporting} className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition flex items-center justify-center gap-2 shadow-md disabled:opacity-70 disabled:cursor-not-allowed">
-                                {isExporting ? <i data-lucide="loader-2" className="animate-spin w-4 h-4"></i> : <i data-lucide="download" className="w-4 h-4"></i>} 导出 PDF
+                                {isExporting ? <i data-lucide="loader-2" className="animate-spin w-4 h-4"></i> : <i data-lucide="download" className="w-4 h-4"></i>} 导出高清 PDF
                             </button>
                         </div>
                     </div>
